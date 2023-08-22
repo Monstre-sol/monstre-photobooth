@@ -1,4 +1,3 @@
-import Head from "next/head";
 import { Inter } from "next/font/google";
 import React, { useEffect } from "react";
 import Webcam from "react-webcam";
@@ -9,12 +8,13 @@ import { Button } from "@/components/ui/button";
 import { name } from "@cloudinary/url-gen/actions/namedTransformation";
 import Lottie from "lottie-react";
 import countdown from "../countdown.json";
-import { motion } from "framer-motion";
+import countdownthree from "../threeseconds.json";
+import { motion, easeInOut, AnimatePresence } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { QRCode } from "react-qrcode-logo";
-import { ArrowLeftCircle, SwitchCamera } from "lucide-react";
+import { ArrowLeftCircle, Link, SwitchCamera } from "lucide-react";
 import { Toaster, toast } from "sonner";
-import { Link } from "lucide-react";
+import Head from "next/head";
 
 const cld = new Cloudinary({
   cloud: {
@@ -48,27 +48,34 @@ type CloudinaryResponse = {
 interface UploadResponse {
   tiplinkUrl: string;
 }
+
 //todo, change to useReducer
 export default function Home() {
   const webcamRef = useRef<Webcam | null>(null);
   const [imageSrc, setImageSrc] = useState<string | null>();
   const [cldData, setCldData] = useState<CloudinaryResponse | null>(null);
+  const [filter, setFilter] = useState<string | null>();
   const [selectedOverlay, setSelectedOverlay] = useState<string | null>(null);
   const [tiplinkUrl, setTiplinkUrl] = useState<string | null>(null);
   const [resetKey, setResetKey] = useState<number>(0);
   const [showCountdown, setShowCountdown] = useState(false);
   const [countdownCompleted, setCountdownCompleted] = useState(false);
   const [isTapped, setIsTapped] = useState(false);
+  const [imagesSrc, setImagesSrc] = useState<string[]>([]);
+  const [src, setSrc] = useState<string | null>(imageSrc || null);
+  const [currentSnapIndex, setCurrentSnapIndex] = useState(0);
+  const [frozenImage, setFrozenImage] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState("user");
+  const capturedImagesRef = useRef<string[]>([]);
+  const [isFirstCountdown, setIsFirstCountdown] = useState(true);
 
   const videoConstraints = {
-    width: 720,
-    height: 720,
+    width: 180,
+    height: 180,
     facingMode: facingMode,
   };
 
   let myImage: any;
-  let src: string | null = imageSrc || null;
 
   function buildImageUrl(public_id: string, namedTransform: string) {
     const myImage = cld.image(public_id);
@@ -76,61 +83,137 @@ export default function Home() {
     return myImage.toURL();
   }
 
-  if (cldData?.public_id && selectedOverlay) {
-    // Find the selected named transformation option by its id
-    const selectedPreset = OVERLAY_OPTIONS.find(
-      (option) => option.id === selectedOverlay
-    );
-    if (selectedPreset) {
-      src = buildImageUrl(cldData.public_id, selectedPreset.id);
+  useEffect(() => {
+    if (cldData?.public_id && selectedOverlay) {
+      const selectedPreset = OVERLAY_OPTIONS.find(
+        (option) => option.id === selectedOverlay
+      );
+      if (selectedPreset) {
+        setSrc(buildImageUrl(cldData.public_id, selectedPreset.id));
+      }
     }
-  }
-
-  function handleOnCapture() {
-    const image = webcamRef.current?.getScreenshot();
-    setImageSrc(image);
-  }
+  }, [cldData, selectedOverlay]);
 
   function handleWebcamClick() {
     setIsTapped(true);
-    setShowCountdown(true);
-    setTimeout(handleOnCapture, 5000);
+    setIsFirstCountdown(capturedImagesRef.current.length === 0);
+
+    const startCaptureSequence = (duration: number | undefined) => {
+      setShowCountdown(true);
+      setTimeout(() => {
+        captureImage();
+      }, duration);
+    };
+
+    const captureImage = () => {
+      const image = webcamRef.current?.getScreenshot();
+      if (image) {
+        capturedImagesRef.current.push(image);
+        setCurrentSnapIndex((prev) => prev + 1);
+        setFrozenImage(image); // Freeze the webcam
+
+        setTimeout(() => {
+          setFrozenImage(null); // Unfreeze after the specified delay.
+
+          // If less than 4 images are captured, start the next sequence.
+          if (capturedImagesRef.current.length < 4) {
+            setIsFirstCountdown(false);
+            // Add 2-second delay before initiating the next sequence.
+            setTimeout(() => {
+              startCaptureSequence(4000);
+            }, 2000);
+          } else {
+            setImagesSrc([...capturedImagesRef.current]);
+          }
+        }, 2000); // Unfreeze after 2 seconds
+      }
+    };
+
+    // Start the capture sequence
+    startCaptureSequence(capturedImagesRef.current.length === 0 ? 5000 : 3000);
   }
 
   function handleOnReset() {
+    capturedImagesRef.current = [];
+    setImagesSrc([]);
     setImageSrc(null);
+    setCldData(null); 
+    setFilter(null);
+    setSelectedOverlay(null);
+    setTiplinkUrl(null);
     setCountdownCompleted(false);
     setShowCountdown(false);
     setIsTapped(false);
+    setImagesSrc([]); 
+    setSrc(null); 
+    setCurrentSnapIndex(0);
+    setFrozenImage(null); 
     setResetKey((prevKey) => prevKey + 1);
   }
 
   function handleOnResetRefresh() {
+    capturedImagesRef.current = [];
+    setImagesSrc([]);
     setImageSrc(null);
+    setCldData(null); 
+    setFilter(null);
+    setSelectedOverlay(null);
+    setTiplinkUrl(null);
     setCountdownCompleted(false);
     setShowCountdown(false);
     setIsTapped(false);
+    setImagesSrc([]); 
+    setSrc(null); 
+    setCurrentSnapIndex(0);
+    setFrozenImage(null); 
     setResetKey((prevKey) => prevKey + 1);
-    setTiplinkUrl(null);
   }
 
+  const MAX_RETRIES = 3; // Choose the number of retries you want, in case of choppy internet
+
   useEffect(() => {
-    if (!imageSrc) return;
-    async function run() {
-      const response = await fetch("/api/cloudinary/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image: imageSrc,
-        }),
-      });
+    if (imagesSrc.length !== 4) return;
 
-      const data = await response.json();
-      setCldData(data);
-    }
+    const uploadCollage = async (retryCount: number = 0): Promise<any> => {
+      try {
+        const response = await fetch("/api/cloudinary/uploadCollage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            images: imagesSrc,
+          }),
+        });
 
-    run();
-  }, [imageSrc]);
+        const data = await response.json();
+
+        if (!data || !data.secure_url) {
+          throw new Error("Failed to obtain a secure URL for the collage");
+        }
+
+        setCldData(data);
+        setSrc(data.secure_url); // Use the collage URL
+        return data;
+      } catch (error) {
+        if (retryCount < MAX_RETRIES) {
+          return uploadCollage(retryCount + 1); // Retry by calling the function recursively
+        } else {
+          throw error; // If we've retried the max number of times, throw the error to be caught by toast.promise
+        }
+      }
+    };
+
+    // Use the toast.promise here
+    toast.promise(uploadCollage(), {
+      loading: "Rendering collage...",
+      success: (data: any) => {
+        return "Collage successfully rendered!";
+      },
+      error: (err: any) => {
+        console.error(err);
+        return "Failed to upload collage after multiple attempts.";
+      },
+    });
+  }, [imagesSrc]);
 
   async function downloadAndUpload(imageUrl: RequestInfo | URL) {
     const uploadPromise = new Promise<UploadResponse>(
@@ -165,7 +248,7 @@ export default function Home() {
       loading: "Minting your Collectible...",
       success: (data: UploadResponse) => {
         setTiplinkUrl(data.tiplinkUrl);
-        return "Collectible successfully minted!";
+        return "Image successfully uploaded!";
       },
       error: "Failed to upload image.",
     });
@@ -240,9 +323,25 @@ export default function Home() {
               </div>
             </div>
           )}
-          {!tiplinkUrl && showCountdown && (
+          {!tiplinkUrl && showCountdown && isFirstCountdown && (
             <Lottie
               animationData={countdown}
+              loop={false}
+              onComplete={() => {
+                setCountdownCompleted(true);
+                setShowCountdown(false); // Hide the countdown
+              }}
+              style={{
+                position: "absolute",
+                zIndex: 2,
+                width: "100%",
+                height: "100%",
+              }}
+            />
+          )}
+          {!tiplinkUrl && showCountdown && !isFirstCountdown && (
+            <Lottie
+              animationData={countdownthree}
               loop={false}
               onComplete={() => {
                 setCountdownCompleted(true);
@@ -256,6 +355,7 @@ export default function Home() {
               }}
             />
           )}
+
           {!tiplinkUrl &&
             (src && countdownCompleted ? (
               <div className="flex justify-center">
@@ -268,20 +368,49 @@ export default function Home() {
                   style={{ width: "100%" }}
                 />
               </div>
+            ) : countdownCompleted && frozenImage ? (
+              <AnimatePresence>
+                <motion.img
+                  src={frozenImage}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.5 }} // You can adjust this duration as needed
+                  exit={{
+                    opacity: 1,
+                  }}
+                  style={{
+                    zIndex: 1,
+                    width: "100%",
+                    height: "100%",
+                    borderRadius: "16px",
+                  }}
+                />
+              </AnimatePresence>
             ) : (
-              <Webcam
-                key={resetKey}
-                ref={webcamRef}
-                videoConstraints={videoConstraints}
-                screenshotFormat="image/webp"
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.5 }}
                 style={{
                   zIndex: 1,
                   width: "100%",
                   height: "100%",
-                  borderRadius: "16px",
-                  border: "10px solid white",
                 }}
-              />
+              >
+                <Webcam
+                  key={resetKey}
+                  ref={webcamRef}
+                  videoConstraints={videoConstraints}
+                  screenshotFormat="image/webp"
+                  style={{
+                    zIndex: 1,
+                    width: "100%",
+                    height: "100%",
+                    borderRadius: "16px",
+                    border: "10px solid white",
+                  }}
+                />
+              </motion.div>
             ))}
         </div>
         {!isTapped && (
@@ -348,7 +477,7 @@ export default function Home() {
             </div>
           </div>
         )}
-        {!tiplinkUrl && countdownCompleted && (
+        {!tiplinkUrl && src && countdownCompleted && (
           <div className="flex justify-between items-center space-x-4 mt-4 w-full lg:w-[468px]">
             <Button
               className="text-sm rounded-xl"
@@ -378,6 +507,7 @@ export default function Home() {
             >
               <div className="relative">
                 {" "}
+                {/* This is the outer container */}
                 <div
                   className="relative bg-white p-4 rounded"
                   style={{
